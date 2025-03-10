@@ -1,0 +1,103 @@
+
+services:
+  redis:
+    image: redis:latest
+    container_name: redis-broker
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - expense-tracker-network
+
+  auth-service:
+    build: ./auth-service
+    container_name: auth-service
+    ports:
+      - "8001:8001"
+    env_file:
+      - ./auth-service/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./auth-service:/app
+    command: >
+      /bin/bash -c "pip install -r requirements.txt && python manage.py migrate && python manage.py runserver 0.0.0.0:8001"
+    networks:
+      - expense-tracker-network
+
+  expense-service:
+    build: ./expense-service
+    container_name: expense-service
+    ports:
+      - "8002:8002"
+    depends_on:
+      auth-service:
+        condition: service_started
+    env_file:
+      - ./expense-service/.env
+    volumes:
+      - ./expense-service:/app
+    command: >
+      /bin/bash -c "pip install -r requirements.txt && python manage.py migrate && python manage.py runserver 0.0.0.0:8002"
+    networks:
+      - expense-tracker-network
+
+  report-service:
+    build: ./report-service
+    container_name: report-service
+    ports:
+      - "8003:8003"
+    depends_on:
+      auth-service:
+        condition: service_started
+      expense-service:
+        condition: service_started
+    env_file:
+      - ./report-service/.env
+    volumes:
+      - ./report-service:/app
+    command: >
+      /bin/bash -c "pip install -r requirements.txt && python manage.py migrate && python manage.py runserver 0.0.0.0:8003"
+    networks:
+      - expense-tracker-network
+
+  notification-service:
+    build: ./notification-service
+    container_name: notification-service
+    ports:
+      - "8004:8004"
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./notification-service/.env
+    volumes:
+      - ./notification-service:/app
+    command: >
+      /bin/bash -c "pip install -r requirements.txt && python manage.py migrate && python manage.py runserver 0.0.0.0:8004"
+    networks:
+      - expense-tracker-network
+
+  celery-worker:
+    build: ./notification-service
+    container_name: celery-worker
+    depends_on:
+      redis:
+        condition: service_healthy
+    env_file:
+      - ./notification-service/.env
+    volumes:
+      - ./notification-service:/app
+    command: >
+      /bin/bash -c "pip install -r requirements.txt && celery -A notification_service worker --loglevel=info"
+    networks:
+      - expense-tracker-network
+
+networks:
+  expense-tracker-network:
+    driver: bridge
